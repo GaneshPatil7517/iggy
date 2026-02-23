@@ -16,9 +16,10 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-use super::status::{ConnectorError, ConnectorStatus};
 use crate::configs::connectors::{ConfigFormat, SourceConfig};
+use crate::metrics::Metrics;
 use dashmap::DashMap;
+use iggy_connector_sdk::api::{ConnectorError, ConnectorStatus};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -63,12 +64,27 @@ impl SourceManager {
         results
     }
 
-    pub async fn update_status(&self, key: &str, status: ConnectorStatus) {
+    pub async fn update_status(
+        &self,
+        key: &str,
+        status: ConnectorStatus,
+        metrics: Option<&Arc<Metrics>>,
+    ) {
         if let Some(source) = self.sources.get(key) {
             let mut source = source.lock().await;
+            let old_status = source.info.status;
             source.info.status = status;
             if matches!(status, ConnectorStatus::Running | ConnectorStatus::Stopped) {
                 source.info.last_error = None;
+            }
+            if let Some(metrics) = metrics {
+                if old_status != ConnectorStatus::Running && status == ConnectorStatus::Running {
+                    metrics.increment_sources_running();
+                } else if old_status == ConnectorStatus::Running
+                    && status != ConnectorStatus::Running
+                {
+                    metrics.decrement_sources_running();
+                }
             }
         }
     }
@@ -88,6 +104,7 @@ pub struct SourceInfo {
     pub key: String,
     pub name: String,
     pub path: String,
+    pub version: String,
     pub enabled: bool,
     pub status: ConnectorStatus,
     pub last_error: Option<ConnectorError>,

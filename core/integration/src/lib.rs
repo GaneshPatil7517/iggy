@@ -18,15 +18,14 @@
 
 pub mod bench_utils;
 pub mod file;
+pub mod harness;
+
 #[allow(deprecated)]
+pub use harness_derive::iggy_harness;
 pub mod http_client;
-#[allow(deprecated)]
 pub mod quic_client;
 #[allow(deprecated)]
 pub mod tcp_client;
-#[allow(deprecated)]
-pub mod websocket_client;
-
 #[allow(deprecated)]
 pub mod test_connectors_runtime;
 #[allow(deprecated)]
@@ -34,3 +33,14 @@ pub mod test_mcp_server;
 #[allow(deprecated)]
 pub mod test_server;
 pub mod test_tls_utils;
+#[allow(deprecated)]
+pub mod websocket_client;
+
+#[doc(hidden)]
+pub mod __macro_support {
+    pub use crate::harness::{
+        ClientConfig, McpClient, McpConfig, TestHarness, TestServerConfig, TlsConfig,
+    };
+    pub use iggy::prelude::ClientWrapper;
+    pub use iggy_common::TransportProtocol;
+}

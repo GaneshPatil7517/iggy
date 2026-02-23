@@ -17,13 +17,13 @@
  */
 
 use crate::args::kind::BenchmarkKindCommand;
+use crate::utils::{ClientFactory, login_root};
 use crate::{args::common::IggyBenchArgs, utils::client_factory::create_client_factory};
 use async_trait::async_trait;
 use bench_report::benchmark_kind::BenchmarkKind;
 use bench_report::individual_metrics::BenchmarkIndividualMetrics;
 use iggy::clients::client::IggyClient;
 use iggy::prelude::*;
-use integration::test_server::{ClientFactory, login_root};
 use std::sync::Arc;
 use tokio::task::JoinSet;
 use tracing::info;
@@ -112,10 +112,11 @@ pub trait Benchmarkable: Send {
                     .args()
                     .max_topic_size()
                     .map_or(MaxTopicSize::Unlimited, MaxTopicSize::Custom);
+                let message_expiry = self.args().message_expiry();
 
                 info!(
-                    "Creating the test topic '{}' for stream '{}' with max topic size: {:?}",
-                    topic_name, stream_name, max_topic_size
+                    "Creating the test topic '{}' for stream '{}' with max topic size: {:?}, message expiry: {}",
+                    topic_name, stream_name, max_topic_size, message_expiry
                 );
 
                 client
@@ -125,7 +126,7 @@ pub trait Benchmarkable: Send {
                         partitions_count,
                         CompressionAlgorithm::default(),
                         None,
-                        IggyExpiry::NeverExpire,
+                        message_expiry,
                         max_topic_size,
                     )
                     .await?;

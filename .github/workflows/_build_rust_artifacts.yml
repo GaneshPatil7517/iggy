@@ -95,14 +95,16 @@ jobs:
           /tmp/copy-latest-from-master.sh save .github scripts
           /tmp/copy-latest-from-master.sh apply
 
+      - name: Install system dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: brew install hwloc
+
       - name: Install musl-tools
         if: matrix.libc == 'musl'
         run: sudo apt-get update && sudo apt-get install -y musl-tools
 
       - name: Setup Rust with cache
         uses: ./.github/actions/utils/setup-rust-with-cache
-        with:
-          cache-targets: false
 
       - name: Add Rust target
         run: rustup target add ${{ matrix.target }}
@@ -138,6 +140,12 @@ jobs:
           # references when linking dbus-sys (required by keyring crate)
           if [[ "${{ matrix.target }}" == "aarch64-unknown-linux-musl" ]]; then
             export CFLAGS="-mno-outline-atomics"
+          fi
+
+          # musl builds: use musl-gcc as linker to ensure proper linking against musl libc
+          if [[ "${{ matrix.libc }}" == "musl" ]]; then
+            export CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=musl-gcc
+            export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=musl-gcc
           fi
 
           cargo build --locked --release --target ${{ matrix.target }} "${bin_flags[@]}"
@@ -203,8 +211,6 @@ jobs:
 
       - name: Setup Rust with cache
         uses: ./.github/actions/utils/setup-rust-with-cache
-        with:
-          cache-targets: false
 
       - name: Add Rust target
         run: rustup target add ${{ matrix.target }}

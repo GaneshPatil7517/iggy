@@ -18,15 +18,17 @@
  */
 use crate::configs::connectors::{ConnectorsConfigProvider, SinkConfig, SourceConfig};
 use crate::configs::runtime::ConnectorsRuntimeConfig;
-use crate::manager::status::ConnectorError;
+use crate::metrics::Metrics;
 use crate::{
     SinkConnectorWrapper, SourceConnectorWrapper,
     manager::{
         sink::{SinkDetails, SinkInfo, SinkManager},
         source::{SourceDetails, SourceInfo, SourceManager},
-        status::ConnectorStatus,
     },
 };
+use iggy_common::IggyTimestamp;
+use iggy_connector_sdk::api::ConnectorError;
+use iggy_connector_sdk::api::ConnectorStatus;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::error;
@@ -36,6 +38,8 @@ pub struct RuntimeContext {
     pub sources: SourceManager,
     pub api_key: String,
     pub config_provider: Arc<dyn ConnectorsConfigProvider>,
+    pub metrics: Arc<Metrics>,
+    pub start_time: IggyTimestamp,
 }
 
 pub fn init(
@@ -46,11 +50,20 @@ pub fn init(
     source_wrappers: &[SourceConnectorWrapper],
     config_provider: Box<dyn ConnectorsConfigProvider>,
 ) -> RuntimeContext {
+    let metrics = Arc::new(Metrics::init());
+    let sinks = SinkManager::new(map_sinks(sinks_config, sink_wrappers));
+    let sources = SourceManager::new(map_sources(sources_config, source_wrappers));
+
+    metrics.set_sinks_total(sinks_config.len() as u32);
+    metrics.set_sources_total(sources_config.len() as u32);
+
     RuntimeContext {
-        sinks: SinkManager::new(map_sinks(sinks_config, sink_wrappers)),
-        sources: SourceManager::new(map_sources(sources_config, source_wrappers)),
+        sinks,
+        sources,
         api_key: config.http.api_key.to_owned(),
         config_provider: Arc::from(config_provider),
+        metrics,
+        start_time: IggyTimestamp::now(),
     }
 }
 
@@ -80,6 +93,7 @@ fn map_sinks(
                     key: sink_plugin.key.to_owned(),
                     name: sink_plugin.name.to_owned(),
                     path: sink_plugin.path.to_owned(),
+                    version: sink_plugin.version.to_owned(),
                     enabled: sink_config.enabled,
                     status,
                     last_error: sink_plugin
@@ -121,6 +135,7 @@ fn map_sources(
                     key: source_plugin.key.to_owned(),
                     name: source_plugin.name.to_owned(),
                     path: source_plugin.path.to_owned(),
+                    version: source_plugin.version.to_owned(),
                     enabled: source_config.enabled,
                     status,
                     last_error: source_plugin

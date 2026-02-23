@@ -19,11 +19,9 @@ using Apache.Iggy.Contracts;
 using Apache.Iggy.Enums;
 using Apache.Iggy.Exceptions;
 using Apache.Iggy.Messages;
-using Apache.Iggy.Tests.Integrations.Attributes;
 using Apache.Iggy.Tests.Integrations.Fixtures;
 using Apache.Iggy.Tests.Integrations.Helpers;
 using Shouldly;
-using TUnit.Core.Logging;
 using Partitioning = Apache.Iggy.Kinds.Partitioning;
 
 namespace Apache.Iggy.Tests.Integrations;
@@ -121,8 +119,8 @@ public class StreamsTests
     [MethodDataSource<IggyServerFixture>(nameof(IggyServerFixture.ProtocolData))]
     public async Task GetStreamById_WithTopics_Should_ReturnValidResponse(Protocol protocol)
     {
-        var topicRequest1 = TopicFactory.CreateTopic("Topic1", messageExpiry: 100_000);
-        var topicRequest2 = TopicFactory.CreateTopic("Topic2", messageExpiry: 100_000);
+        var topicRequest1 = TopicFactory.CreateTopic("Topic1", messageExpiry: TimeSpan.FromHours(1));
+        var topicRequest2 = TopicFactory.CreateTopic("Topic2", messageExpiry: TimeSpan.FromHours(1));
 
         await Fixture.Clients[protocol].CreateTopicAsync(Identifier.String(Name.GetWithProtocol(protocol)),
             topicRequest1.Name, topicRequest1.PartitionsCount, messageExpiry: topicRequest1.MessageExpiry);
@@ -151,7 +149,7 @@ public class StreamsTests
         response.ShouldNotBeNull();
         response.Id.ShouldBeGreaterThanOrEqualTo(0u);
         response.Name.ShouldBe(Name.GetWithProtocol(protocol));
-        response.Size.ShouldBe(490u);
+        response.Size.ShouldBe(546u);
         response.CreatedAt.UtcDateTime.ShouldBe(DateTimeOffset.UtcNow.UtcDateTime, TimeSpan.FromMinutes(1));
         response.MessagesCount.ShouldBe(7u);
         response.TopicsCount.ShouldBe(2);
@@ -163,7 +161,7 @@ public class StreamsTests
         topic.CompressionAlgorithm.ShouldBe(topicRequest1.CompressionAlgorithm);
         topic.Partitions.ShouldBeNull();
         topic.MessageExpiry.ShouldBe(topicRequest1.MessageExpiry);
-        topic.Size.ShouldBe(210u);
+        topic.Size.ShouldBe(234u);
         topic.PartitionsCount.ShouldBe(topicRequest1.PartitionsCount);
         topic.ReplicationFactor.ShouldBe(topicRequest1.ReplicationFactor);
         topic.MaxTopicSize.ShouldBeGreaterThan(0u);
@@ -230,7 +228,8 @@ public class StreamsTests
     public async Task DeleteStream_NotExists_Should_Throw_InvalidResponse(Protocol protocol)
     {
         await Should.ThrowAsync<IggyInvalidStatusCodeException>(() =>
-            Fixture.Clients[protocol].DeleteStreamAsync(Identifier.String("stream-to-delete".GetWithProtocol(protocol))));
+            Fixture.Clients[protocol]
+                .DeleteStreamAsync(Identifier.String("stream-to-delete".GetWithProtocol(protocol))));
     }
 
     [Test]

@@ -9,7 +9,7 @@
 
   [![crates.io](https://img.shields.io/crates/v/iggy.svg)](https://crates.io/crates/iggy)
   [![crates.io](https://img.shields.io/crates/d/iggy.svg)](https://crates.io/crates/iggy)
-  [![coverage](https://coveralls.io/repos/github/apache/iggy/badge.svg?branch=master)](https://coveralls.io/github/apache/iggy?branch=master)
+  [![codecov](https://codecov.io/github/apache/iggy/graph/badge.svg?token=D9TIWPBWE2)](https://codecov.io/github/apache/iggy)
   [![dependency](https://deps.rs/repo/github/apache/iggy/status.svg)](https://deps.rs/repo/github/apache/iggy)
   [![x](https://img.shields.io/twitter/follow/ApacheIggy?style=social)](https://twitter.com/ApacheIggy)
   [![discord-badge](https://img.shields.io/discord/1144142576266530928)](https://discord.gg/C5Sux5NcRa)
@@ -211,11 +211,11 @@ ulimits:
 
 ## Configuration
 
-The default configuration can be found in `server.toml` file in `configs` directory.
+The default configuration can be found in `config.toml` file in `core/server` directory.
 
-The configuration file is loaded from the current working directory, but you can specify the path to the configuration file by setting `IGGY_CONFIG_PATH` environment variable, for example `export IGGY_CONFIG_PATH=configs/server.toml` (or other command depending on OS).
+The configuration file is loaded from the current working directory, but you can specify the path to the configuration file by setting `IGGY_CONFIG_PATH` environment variable, for example `export IGGY_CONFIG_PATH=core/server/config.toml` (or other command depending on OS).
 
-When config file is not found, the default values from embedded `server.toml` file are used.
+When config file is not found, the default values from embedded `config.toml` file are used.
 
 For the detailed documentation of the configuration file, please refer to the [configuration](https://iggy.apache.org/docs/server/configuration) section.
 
@@ -257,7 +257,7 @@ Start the server:
 
 `cargo run --bin iggy-server`
 
-All the data used by the server will be persisted under the `local_data` directory by default, unless specified differently in the configuration (see `system.path` in `server.toml`).
+All the data used by the server will be persisted under the `local_data` directory by default, unless specified differently in the configuration (see `system.path` in `config.toml`).
 
 One can use default root credentials with optional `--with-default-root-credentials`.
 This flag is equivalent to setting `IGGY_ROOT_USERNAME=iggy` and `IGGY_ROOT_PASSWORD=iggy`, plus

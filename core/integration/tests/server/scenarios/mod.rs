@@ -16,28 +16,40 @@
  * under the License.
  */
 
+pub mod authentication_scenario;
 pub mod bench_scenario;
 pub mod concurrent_scenario;
 pub mod consumer_group_auto_commit_reconnection_scenario;
 pub mod consumer_group_join_scenario;
+pub mod consumer_group_new_messages_after_restart_scenario;
 pub mod consumer_group_offset_cleanup_scenario;
 pub mod consumer_group_with_multiple_clients_polling_messages_scenario;
 pub mod consumer_group_with_single_client_polling_messages_scenario;
 pub mod consumer_timestamp_polling_scenario;
 pub mod create_message_payload;
+pub mod cross_protocol_pat_scenario;
 pub mod delete_segments_scenario;
 pub mod encryption_scenario;
+pub mod log_rotation_scenario;
+pub mod message_cleanup_scenario;
 pub mod message_headers_scenario;
 pub mod message_size_scenario;
+pub mod offset_scenario;
+pub mod permissions_scenario;
+pub mod read_during_persistence_scenario;
+pub mod segment_rotation_race_scenario;
+pub mod single_message_per_batch_scenario;
+pub mod snapshot_scenario;
 pub mod stale_client_consumer_group_scenario;
 pub mod stream_size_validation_scenario;
 pub mod system_scenario;
 pub mod tcp_tls_scenario;
+pub mod timestamp_scenario;
 pub mod user_scenario;
 pub mod websocket_tls_scenario;
 
 use iggy::prelude::*;
-use integration::test_server::{ClientFactory, delete_user};
+use integration::harness::{TestHarness, delete_user};
 
 const PARTITION_ID: u32 = 0;
 const STREAM_NAME: &str = "test-stream";
@@ -50,9 +62,11 @@ const USERNAME_3: &str = "user3";
 const CONSUMER_KIND: ConsumerKind = ConsumerKind::Consumer;
 const MESSAGES_COUNT: u32 = 1337;
 
-async fn create_client(client_factory: &dyn ClientFactory) -> IggyClient {
-    let client = client_factory.create_client().await;
-    IggyClient::create(client, None, None)
+async fn create_client(harness: &TestHarness) -> IggyClient {
+    harness
+        .new_client()
+        .await
+        .expect("Failed to create new client")
 }
 
 async fn get_consumer_group(client: &IggyClient) -> ConsumerGroupDetails {

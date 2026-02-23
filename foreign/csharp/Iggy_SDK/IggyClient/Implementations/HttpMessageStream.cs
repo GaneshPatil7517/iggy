@@ -30,6 +30,7 @@ using Apache.Iggy.Exceptions;
 using Apache.Iggy.Kinds;
 using Apache.Iggy.Messages;
 using Apache.Iggy.StringHandlers;
+using Apache.Iggy.Utils;
 using Partitioning = Apache.Iggy.Kinds.Partitioning;
 
 namespace Apache.Iggy.IggyClient.Implementations;
@@ -144,15 +145,14 @@ public class HttpMessageStream : IIggyClient
     /// <inheritdoc />
     public async Task<TopicResponse?> CreateTopicAsync(Identifier streamId, string name, uint partitionsCount,
         CompressionAlgorithm compressionAlgorithm = CompressionAlgorithm.None, byte? replicationFactor = null,
-        ulong messageExpiry = 0, ulong maxTopicSize = 0,
-        CancellationToken token = default)
+        TimeSpan? messageExpiry = null, ulong maxTopicSize = 0, CancellationToken token = default)
     {
         var json = JsonSerializer.Serialize(new CreateTopicRequest
         {
             Name = name,
             CompressionAlgorithm = compressionAlgorithm,
             MaxTopicSize = maxTopicSize,
-            MessageExpiry = messageExpiry,
+            MessageExpiry = DurationHelpers.ToDuration(messageExpiry),
             PartitionsCount = partitionsCount,
             ReplicationFactor = replicationFactor
         }, _jsonSerializerOptions);
@@ -173,11 +173,11 @@ public class HttpMessageStream : IIggyClient
     /// <inheritdoc />
     public async Task UpdateTopicAsync(Identifier streamId, Identifier topicId, string name,
         CompressionAlgorithm compressionAlgorithm = CompressionAlgorithm.None,
-        ulong maxTopicSize = 0, ulong messageExpiry = 0, byte? replicationFactor = null,
+        ulong maxTopicSize = 0, TimeSpan? messageExpiry = null, byte? replicationFactor = null,
         CancellationToken token = default)
     {
         var json = JsonSerializer.Serialize(
-            new UpdateTopicRequest(name, compressionAlgorithm, maxTopicSize, messageExpiry, replicationFactor),
+            new UpdateTopicRequest(name, compressionAlgorithm, maxTopicSize, DurationHelpers.ToDuration(messageExpiry), replicationFactor),
             _jsonSerializerOptions);
         var data = new StringContent(json, Encoding.UTF8, "application/json");
         var response = await _httpClient.PutAsync($"/streams/{streamId}/topics/{topicId}", data, token);
@@ -456,6 +456,31 @@ public class HttpMessageStream : IIggyClient
     }
 
     /// <inheritdoc />
+    public async Task<byte[]> GetSnapshotAsync(SnapshotCompression compression,
+        IList<SystemSnapshotType> snapshotTypes, CancellationToken token = default)
+    {
+        // Rust serde uses default derive (PascalCase) for these enums, not snake_case.
+        // We use .ToString() to produce PascalCase names matching Rust's serde expectations.
+        var request = new
+        {
+            compression = compression.ToString(),
+            snapshot_types = snapshotTypes.Select(t => t.ToString()).ToList()
+        };
+        var json = JsonSerializer.Serialize(request, _jsonSerializerOptions);
+        var data = new StringContent(json, Encoding.UTF8, "application/json");
+
+        var response = await _httpClient.PostAsync("/snapshot", data, token);
+
+        if (response.IsSuccessStatusCode)
+        {
+            return await response.Content.ReadAsByteArrayAsync(token);
+        }
+
+        await HandleResponseAsync(response);
+        return [];
+    }
+
+    /// <inheritdoc />
     public Task ConnectAsync(CancellationToken token = default)
     {
         return Task.CompletedTask;
@@ -532,6 +557,22 @@ public class HttpMessageStream : IIggyClient
         {
             await HandleResponseAsync(response);
         }
+    }
+
+    /// <summary>
+    ///     This method is only supported in TCP protocol
+    /// </summary>
+    /// <param name="streamId">The identifier of the stream containing the topic (numeric ID or name).</param>
+    /// <param name="topicId">The identifier of the topic containing the partition (numeric ID or name).</param>
+    /// <param name="partitionId">The unique partition ID.</param>
+    /// <param name="segmentsCount">The number of segments to delete.</param>
+    /// <param name="token">The cancellation token to cancel the operation.</param>
+    /// <returns>A task representing the asynchronous operation.</returns>
+    /// <exception cref="FeatureUnavailableException"></exception>
+    public Task DeleteSegmentsAsync(Identifier streamId, Identifier topicId, uint partitionId,
+        uint segmentsCount, CancellationToken token = default)
+    {
+        throw new FeatureUnavailableException();
     }
 
     /// <inheritdoc />
@@ -705,10 +746,11 @@ public class HttpMessageStream : IIggyClient
     }
 
     /// <inheritdoc />
-    public async Task<RawPersonalAccessToken?> CreatePersonalAccessTokenAsync(string name, ulong? expiry = null,
+    public async Task<RawPersonalAccessToken?> CreatePersonalAccessTokenAsync(string name, TimeSpan? expiry = null,
         CancellationToken token = default)
     {
-        var json = JsonSerializer.Serialize(new CreatePersonalAccessTokenRequest(name, expiry), _jsonSerializerOptions);
+        var json = JsonSerializer.Serialize(
+            new CreatePersonalAccessTokenRequest(name, DurationHelpers.ToDuration(expiry)), _jsonSerializerOptions);
 
         var content = new StringContent(json, Encoding.UTF8, "application/json");
         var response = await _httpClient.PostAsync("/personal-access-tokens", content, token);

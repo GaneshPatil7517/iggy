@@ -19,6 +19,8 @@
 
 package org.apache.iggy.client.blocking;
 
+import com.github.dockerjava.api.model.Capability;
+import com.github.dockerjava.api.model.Ulimit;
 import org.apache.iggy.stream.StreamDetails;
 import org.apache.iggy.topic.CompressionAlgorithm;
 import org.junit.jupiter.api.AfterAll;
@@ -42,6 +44,7 @@ import static org.apache.iggy.TestConstants.TOPIC_NAME;
 @Testcontainers
 public abstract class IntegrationTest {
 
+    public static final String LOCALHOST_IP = "127.0.0.1";
     public static final int HTTP_PORT = 3000;
     public static final int TCP_PORT = 8090;
     protected static GenericContainer<?> iggyServer;
@@ -53,6 +56,10 @@ public abstract class IntegrationTest {
     protected List<Long> createdUserIds = new ArrayList<>();
     protected IggyBaseClient client;
 
+    public static int tcpPort() {
+        return USE_EXTERNAL_SERVER ? TCP_PORT : iggyServer.getMappedPort(TCP_PORT);
+    }
+
     @BeforeAll
     static void setupContainer() {
         if (!USE_EXTERNAL_SERVER) {
@@ -63,6 +70,10 @@ public abstract class IntegrationTest {
                     .withEnv("IGGY_ROOT_PASSWORD", "iggy")
                     .withEnv("IGGY_TCP_ADDRESS", "0.0.0.0:8090")
                     .withEnv("IGGY_HTTP_ADDRESS", "0.0.0.0:3000")
+                    .withCreateContainerCmdModifier(cmd -> cmd.getHostConfig()
+                            .withCapAdd(Capability.SYS_NICE)
+                            .withSecurityOpts(List.of("seccomp:unconfined"))
+                            .withUlimits(List.of(new Ulimit("memlock", -1L, -1L))))
                     .withLogConsumer(frame -> System.out.print(frame.getUtf8String()));
             iggyServer.start();
         } else {

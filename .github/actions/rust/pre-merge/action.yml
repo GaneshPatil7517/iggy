@@ -44,8 +44,7 @@ runs:
     - name: Setup Rust with cache
       uses: ./.github/actions/utils/setup-rust-with-cache
       with:
-        cache-targets: false # Only cache registry and git deps, not target dir (sccache handles that)
-        show-stats: true
+        print-cache-status: ${{ inputs.task == 'test' }}
 
     - name: Install tools for specific tasks
       run: |
@@ -100,18 +99,54 @@ runs:
         echo -n "test" | gnome-keyring-daemon --unlock
       shell: bash
 
-    - name: Build and test
+    - name: Install cargo-llvm-cov
+      if: inputs.task == 'test'
+      uses: taiki-e/install-action@v2
+      with:
+        tool: cargo-llvm-cov
+
+    - name: Build and test with coverage
       if: inputs.task == 'test'
       run: |
-        # Build all targets first
-        cargo build --locked --all-targets
+        source <(cargo llvm-cov show-env --export-prefix)
 
-        # Use nextest if available, otherwise use cargo test
+        bins_start=$(date +%s)
+        cargo build --locked
+        bins_end=$(date +%s)
+        bins_duration=$((bins_end - bins_start))
+        echo "::notice::Binaries and libraries built in ${bins_duration}s ($(date -ud @${bins_duration} +'%M:%S'))"
+
+        compile_start=$(date +%s)
+        cargo test --locked --no-run
+        compile_end=$(date +%s)
+        compile_duration=$((compile_end - compile_start))
+        echo "::notice::Tests compiled in ${compile_duration}s ($(date -ud @${compile_duration} +'%M:%S'))"
+
+        test_start=$(date +%s)
         if command -v cargo-nextest &> /dev/null; then
           cargo nextest run --locked --no-fail-fast
         else
           cargo test --locked --no-fail-fast
         fi
+        test_end=$(date +%s)
+        test_duration=$((test_end - test_start))
+        echo "::notice::Tests executed in ${test_duration}s ($(date -ud @${test_duration} +'%M:%S'))"
+
+        build_duration=$((bins_duration + compile_duration))
+        total_duration=$((build_duration + test_duration))
+        echo ""
+        echo "========================================="
+        echo "All targets build:             ${bins_duration}s ($(date -ud @${bins_duration} +'%M:%S'))"
+        echo "Tests compile:                 ${compile_duration}s ($(date -ud @${compile_duration} +'%M:%S'))"
+        echo "Tests execute:                 ${test_duration}s ($(date -ud @${test_duration} +'%M:%S'))"
+        echo "-----------------------------------------"
+        echo "Total build:                   ${build_duration}s ($(date -ud @${build_duration} +'%M:%S'))"
+        echo "Total time:                    ${total_duration}s ($(date -ud @${total_duration} +'%M:%S'))"
+        echo "========================================="
+
+        cargo llvm-cov report --codecov --output-path codecov.json
+        echo "Coverage report generated: codecov.json"
+        ls -la codecov.json
       shell: bash
 
     - name: Backwards compatibility check
@@ -126,7 +161,7 @@ runs:
     # aarch64 builds (run on ARM64 runners)
     - name: Build aarch64-gnu
       if: inputs.task == 'build-aarch64-gnu'
-      run: cargo build --locked --all-targets
+      run: cargo build --locked
       shell: bash
 
     - name: Install musl tools for aarch64-musl
@@ -138,7 +173,7 @@ runs:
 
     - name: Build aarch64-musl
       if: inputs.task == 'build-aarch64-musl'
-      run: cargo build --locked --all-targets --target aarch64-unknown-linux-musl
+      run: cargo build --locked --target aarch64-unknown-linux-musl
       shell: bash
       env:
         # Disable GCC outline atomics to avoid undefined __aarch64_ldadd4_sync
@@ -150,5 +185,5 @@ runs:
     # macOS builds
     - name: Build macOS aarch64
       if: inputs.task == 'build-macos-aarch64'
-      run: cargo build --locked --all-targets
+      run: cargo build --locked
       shell: bash

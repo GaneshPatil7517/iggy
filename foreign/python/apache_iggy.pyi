@@ -266,6 +266,8 @@ class IggyClient:
         partitions_count: builtins.int,
         compression_algorithm: typing.Optional[builtins.str] = None,
         replication_factor: typing.Optional[builtins.int] = None,
+        message_expiry: typing.Optional[datetime.timedelta] = None,
+        max_topic_size: typing.Optional[builtins.int] = None,
     ) -> collections.abc.Awaitable[None]:
         r"""
         Creates a new topic with the given parameters.
@@ -324,7 +326,7 @@ class IggyClient:
         init_retries: typing.Optional[builtins.int] = None,
         init_retry_interval: typing.Optional[datetime.timedelta] = None,
         allow_replay: builtins.bool = False,
-    ) -> IggyConsumer:
+    ) -> collections.abc.Awaitable[IggyConsumer]:
         r"""
         Creates a new consumer group consumer.
 
@@ -384,6 +386,18 @@ class IggyConsumer:
 
         Returns `Ok(())` if the server responds successfully, or a `PyRuntimeError`
         if the operation fails.
+        """
+    def iter_messages(self) -> collections.abc.AsyncIterator[ReceiveMessage]:
+        r"""
+        Asynchronously iterate over `ReceiveMessage`s.
+
+        Returns an async iterator that raises `StopAsyncIteration` when no more messages are available
+        or a `PyRuntimeError` on failure.
+
+        Note: This method does not currently support `AutoCommit.After`.
+        For `AutoCommit.IntervalOrAfter(datetime.timedelta, AutoCommitAfter)`,
+        only the interval part is applied; the `after` mode is ignored.
+        Use `consume_messages()` if you need commit-after-processing semantics.
         """
     def consume_messages(
         self,
@@ -467,6 +481,10 @@ class ReceiveMessage:
 
         The length represents the length of the payload.
         """
+    def partition_id(self) -> builtins.int:
+        r"""
+        Retrieves the partition this message belongs to.
+        """
 
 class SendMessage:
     r"""
@@ -477,10 +495,10 @@ class SendMessage:
     """
     def __new__(cls, data: builtins.str | bytes) -> SendMessage:
         r"""
-        Constructs a new `SendMessage` instance from a string.
+        Constructs a new `SendMessage` instance from a string or bytes.
 
         This method allows for the creation of a `SendMessage` instance
-        directly from Python using the provided string data.
+        directly from Python using the provided string or bytes data.
         """
 
 class StreamDetails:

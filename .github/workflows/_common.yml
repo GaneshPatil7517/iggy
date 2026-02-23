@@ -33,20 +33,25 @@ jobs:
   rust-versions:
     name: Check Rust versions sync
     runs-on: ubuntu-latest
-    env:
-      IGGY_CI_BUILD: true
     steps:
       - uses: actions/checkout@v4
 
       - name: Check Rust versions are synchronized
         run: ./scripts/ci/sync-rust-version.sh --check
 
+  python-versions:
+    name: Check Python SDK versions sync
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check Python SDK versions are synchronized
+        run: ./scripts/ci/python-version-sync.sh --check
+
   pr-title:
     name: Check PR Title
     if: github.event_name == 'pull_request' && !inputs.skip_pr_title
     runs-on: ubuntu-latest
-    env:
-      IGGY_CI_BUILD: true
     steps:
       - name: Validate PR Title
         uses: amannn/action-semantic-pull-request@v5
@@ -102,20 +107,21 @@ jobs:
             metadata
             message_bus
             storage
+            simulator
+            configs
 
   license-headers:
     name: Check license headers
     runs-on: ubuntu-latest
-    env:
-      IGGY_CI_BUILD: true
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Go
-        uses: actions/setup-go@v5
+      - name: Setup Go with cache
+        uses: ./.github/actions/utils/setup-go-with-cache
         with:
           go-version: "1.23"
-          cache: false
+          enabled: "false"
+          download-deps: "false"
 
       - name: Install addlicense
         run: go install github.com/google/addlicense@4529cd558fa0bf07ab0f2650e36d089fb1c07c89
@@ -126,15 +132,13 @@ jobs:
   license-list:
     name: Check licenses list
     runs-on: ubuntu-latest
-    env:
-      IGGY_CI_BUILD: true
     steps:
       - uses: actions/checkout@v4
 
       - name: Setup Rust toolchain
         uses: ./.github/actions/utils/setup-rust-with-cache
         with:
-          enabled: "false" # Don't need cache for just checking licenses
+          read-cache: "false"
 
       - name: Install cargo-license
         run: cargo install cargo-license
@@ -144,8 +148,6 @@ jobs:
   markdown:
     name: Markdown lint
     runs-on: ubuntu-latest
-    env:
-      IGGY_CI_BUILD: true
     steps:
       - uses: actions/checkout@v4
 
@@ -163,8 +165,6 @@ jobs:
   shellcheck:
     name: Shell scripts lint
     runs-on: ubuntu-latest
-    env:
-      IGGY_CI_BUILD: true
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -181,8 +181,6 @@ jobs:
   trailing-whitespace:
     name: Check trailing whitespace
     runs-on: ubuntu-latest
-    env:
-      IGGY_CI_BUILD: true
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -195,8 +193,6 @@ jobs:
   trailing-newline:
     name: Check trailing newline
     runs-on: ubuntu-latest
-    env:
-      IGGY_CI_BUILD: true
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -209,8 +205,6 @@ jobs:
   toml-format:
     name: Check TOML formatting
     runs-on: ubuntu-latest
-    env:
-      IGGY_CI_BUILD: true
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -231,6 +225,7 @@ jobs:
     needs:
       [
         rust-versions,
+        python-versions,
         pr-title,
         license-headers,
         license-list,
@@ -242,8 +237,6 @@ jobs:
       ]
     if: always()
     runs-on: ubuntu-latest
-    env:
-      IGGY_CI_BUILD: true
     steps:
       - name: Summary
         run: |
@@ -270,6 +263,7 @@ jobs:
 
           # Always-run checks
           RUST_VERSIONS="${{ needs.rust-versions.result }}"
+          PYTHON_VERSIONS="${{ needs.python-versions.result }}"
           LICENSE_HEADERS="${{ needs.license-headers.result }}"
           LICENSE_LIST="${{ needs.license-list.result }}"
           MARKDOWN="${{ needs.markdown.result }}"
@@ -280,6 +274,14 @@ jobs:
             echo "| ❌ Rust Versions | failure | Rust versions mismatch in Dockerfiles |" >> $GITHUB_STEP_SUMMARY
           else
             echo "| ⏭️ Rust Versions | $RUST_VERSIONS | Check skipped |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          if [ "$PYTHON_VERSIONS" = "success" ]; then
+            echo "| ✅ Python SDK Versions | success | Cargo.toml and pyproject.toml synchronized |" >> $GITHUB_STEP_SUMMARY
+          elif [ "$PYTHON_VERSIONS" = "failure" ]; then
+            echo "| ❌ Python SDK Versions | failure | Version mismatch between Cargo.toml and pyproject.toml |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| ⏭️ Python SDK Versions | $PYTHON_VERSIONS | Check skipped |" >> $GITHUB_STEP_SUMMARY
           fi
 
           if [ "$LICENSE_HEADERS" = "success" ]; then

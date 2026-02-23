@@ -20,109 +20,250 @@ pub mod mux;
 pub mod stream;
 pub mod user;
 
-/// Macro to generate a `{State}Command` enum and implement `StateCommand` trait.
-///
-/// # Arguments
-/// * `$state_type` - The type that implements `ApplyState` trait
-/// * `$command_enum` - The name of the command enum to generate (e.g., StreamsCommand)
-/// * `$operations` - Array of Operation enum variants (also used as payload type names)
-///
-/// # Example
-/// ```ignore
-/// define_state_command! {
-///     Streams,
-///     StreamsCommand,
-///     [CreateStream, UpdateStream, DeleteStream, PurgeStream]
-/// }
-/// ```
-#[macro_export]
-macro_rules! define_state_command {
-    (
-        $state_type:ty,
-        $command_enum:ident,
-        [$($operation:ident),* $(,)?]
-    ) => {
-        #[derive(Debug)]
-        pub enum $command_enum {
-            $(
-                $operation($operation),
-            )*
-        }
+use left_right::*;
+use std::cell::UnsafeCell;
+use std::sync::Arc;
 
-        impl $crate::stm::StateCommand for $state_type {
-            type Command = $command_enum;
-            type Input = ::iggy_common::message::Message<::iggy_common::header::PrepareHeader>;
-
-            fn into_command(input: &Self::Input) -> Option<Self::Command> {
-                use ::iggy_common::BytesSerializable;
-                use ::bytes::Bytes;
-                use ::iggy_common::header::Operation;
-
-                // TODO: rework this thing, so we don't copy the bytes on each request
-                let body = Bytes::copy_from_slice(input.body());
-                match input.header().operation {
-                    $(
-                        Operation::$operation => {
-                            Some($command_enum::$operation(
-                                $operation::from_bytes(body.clone()).unwrap()
-                            ))
-                        },
-                    )*
-                    _ => None,
-                }
-            }
-        }
-
-        // Compile-time check that the type implements ApplyState
-        const _: () = {
-            const fn assert_impl_apply_state<T: $crate::stm::ApplyState>() {}
-            assert_impl_apply_state::<$state_type>();
-        };
-    };
+pub struct WriteCell<T, O>
+where
+    T: Absorb<O>,
+{
+    inner: UnsafeCell<WriteHandle<T, O>>,
 }
 
-// This is public interface to state, therefore it will be imported from different crate, for now during development I am leaving it there.
-pub trait State
+impl<T, O> std::fmt::Debug for WriteCell<T, O>
 where
-    Self: Sized,
+    T: Absorb<O>,
 {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WriteCell").finish_non_exhaustive()
+    }
+}
+
+impl<T, O> WriteCell<T, O>
+where
+    T: Absorb<O>,
+{
+    pub fn new(write: WriteHandle<T, O>) -> Self {
+        Self {
+            inner: UnsafeCell::new(write),
+        }
+    }
+
+    pub fn apply(&self, cmd: O) {
+        let hdl = unsafe {
+            self.inner
+                .get()
+                .as_mut()
+                .expect("[apply]: called on uninit writer, for cmd: {cmd}")
+        };
+        hdl.append(cmd).publish();
+    }
+}
+
+/// Parses type-erased input into a command. Macro-generated.
+/// Returns `Ok(cmd)` if applicable, `Err(input)` to pass ownership back.
+pub trait Command {
+    type Cmd;
+    type Input;
+
+    fn parse(input: Self::Input) -> Result<Self::Cmd, Self::Input>;
+}
+
+/// Per-command handler for a given state type.
+/// Each command struct implements this for the state it mutates.
+pub trait StateHandler {
+    type State;
+    fn apply(&self, state: &mut Self::State);
+}
+
+#[derive(Debug)]
+pub struct LeftRight<T, C>
+where
+    T: Absorb<C>,
+{
+    write: Option<WriteCell<T, C>>,
+    #[allow(unused)]
+    read: Arc<ReadHandle<T>>,
+}
+
+impl<T> From<T> for LeftRight<T, <T as Command>::Cmd>
+where
+    T: Absorb<<T as Command>::Cmd> + Clone + Command,
+{
+    fn from(inner: T) -> Self {
+        let (write, read) = {
+            let (w, r) = left_right::new_from_empty(inner);
+            (WriteCell::new(w).into(), r.into())
+        };
+        Self { write, read }
+    }
+}
+
+impl<T> LeftRight<T, <T as Command>::Cmd>
+where
+    T: Absorb<<T as Command>::Cmd> + Clone + Command,
+{
+    pub fn do_apply(&self, cmd: <T as Command>::Cmd) {
+        self.write
+            .as_ref()
+            .expect("no write handle - not the owner shard")
+            .apply(cmd);
+    }
+}
+
+/// Public interface for state machines.
+/// Returns `Ok(output)` if applicable, `Err(input)` to pass ownership back.
+pub trait State {
     type Output;
     type Input;
 
-    // Apply the state machine logic and return an optional output.
-    // The output is optional, as we model the `StateMachine`, as an variadic list,
-    // where not all state machines will produce an output for every input event.
-    fn apply(&self, input: &Self::Input) -> Option<Self::Output>;
+    fn apply(&self, input: Self::Input) -> Result<Self::Output, Self::Input>;
 }
 
-// TODO: This interface should be private to the stm module.
 pub trait StateMachine {
     type Input;
     type Output;
-    fn update(&self, input: &Self::Input, output: &mut Vec<Self::Output>);
+    fn update(&self, input: Self::Input) -> Self::Output;
 }
 
-pub trait StateCommand {
-    type Command;
-    type Input;
+/// Generates the state's inner struct and wrapper type.
+///
+/// # Generated items
+/// - `{$state}Inner` struct with the specified fields (the data)
+/// - `$state` wrapper struct (contains LeftRight storage)
+/// - `From<LeftRight<...>>` impl for `$state`
+/// - `From<{$state}Inner>` impl for `$state`
+///
+/// The command enum, parsing, dispatch, and Absorb impl are generated
+/// by `collect_handlers!` separately, keeping state definition decoupled
+/// from the set of operations.
+#[macro_export]
+macro_rules! define_state {
+    (
+        $state:ident {
+            $($field_name:ident : $field_type:ty),* $(,)?
+        }
+    ) => {
+        paste::paste! {
+            #[derive(Debug, Clone, Default)]
+            pub struct [<$state Inner>] {
+                $(
+                    pub $field_name: $field_type,
+                )*
+            }
 
-    fn into_command(input: &Self::Input) -> Option<Self::Command>;
+            impl [<$state Inner>] {
+                pub fn new() -> Self {
+                    Self::default()
+                }
+            }
+
+            #[derive(Debug)]
+            pub struct $state {
+                inner: $crate::stm::LeftRight<[<$state Inner>], [<$state Command>]>,
+            }
+
+            impl From<$crate::stm::LeftRight<[<$state Inner>], [<$state Command>]>> for $state {
+                fn from(inner: $crate::stm::LeftRight<[<$state Inner>], [<$state Command>]>) -> Self {
+                    Self { inner }
+                }
+            }
+
+            impl From<[<$state Inner>]> for $state {
+                fn from(inner: [<$state Inner>]) -> Self {
+                    let left_right: $crate::stm::LeftRight<[<$state Inner>], [<$state Command>]> = inner.into();
+                    left_right.into()
+                }
+            }
+        }
+    };
 }
 
-pub trait ApplyState: StateCommand {
-    type Output;
+/// Generates the command enum, parsing, dispatch, State, and Absorb for a state type.
+///
+/// # Generated items
+/// - `{$state}Command` enum with one variant per operation
+/// - `Command` impl for `{$state}Inner` (parses `Message<PrepareHeader>`)
+/// - `{$state}Inner::dispatch()` method (routes each variant to `StateHandler::apply()`)
+/// - `State` impl for `$state` wrapper
+/// - `Absorb<{$state}Command>` impl for `{$state}Inner`
+///
+/// # Requirements
+/// Each listed operation type must implement `StateHandler<{$state}Inner>`.
+#[macro_export]
+macro_rules! collect_handlers {
+    (
+        $state:ident {
+            $($operation:ident),* $(,)?
+        }
+    ) => {
+        paste::paste! {
+            #[derive(Debug, Clone)]
+            pub enum [<$state Command>] {
+                $(
+                    $operation($operation),
+                )*
+            }
 
-    fn do_apply(&self, cmd: Self::Command) -> Self::Output;
-}
+            impl $crate::stm::Command for [<$state Inner>] {
+                type Cmd = [<$state Command>];
+                type Input = ::iggy_common::message::Message<::iggy_common::header::PrepareHeader>;
 
-impl<T> State for T
-where
-    T: ApplyState,
-{
-    type Output = T::Output;
-    type Input = T::Input;
+                fn parse(input: Self::Input) -> Result<Self::Cmd, Self::Input> {
+                    use ::iggy_common::BytesSerializable;
+                    use ::iggy_common::header::Operation;
 
-    fn apply(&self, input: &Self::Input) -> Option<Self::Output> {
-        T::into_command(input).map(|cmd| self.do_apply(cmd))
-    }
+                    match input.header().operation {
+                        $(
+                            Operation::$operation => {
+                                let body = input.body_bytes();
+                                Ok([<$state Command>]::$operation(
+                                    $operation::from_bytes(body).unwrap()
+                                ))
+                            },
+                        )*
+                        _ => Err(input),
+                    }
+                }
+            }
+
+            impl [<$state Inner>] {
+                fn dispatch(&mut self, cmd: &[<$state Command>]) {
+                    match cmd {
+                        $(
+                            [<$state Command>]::$operation(payload) => {
+                                $crate::stm::StateHandler::apply(payload, self);
+                            },
+                        )*
+                    }
+                }
+            }
+
+            impl $crate::stm::State for $state {
+                type Input = <[<$state Inner>] as $crate::stm::Command>::Input;
+                type Output = ();
+
+                fn apply(&self, input: Self::Input) -> Result<Self::Output, Self::Input> {
+                    let cmd = <[<$state Inner>] as $crate::stm::Command>::parse(input)?;
+                    self.inner.do_apply(cmd);
+                    Ok(())
+                }
+            }
+
+            impl left_right::Absorb<[<$state Command>]> for [<$state Inner>] {
+                fn absorb_first(&mut self, cmd: &mut [<$state Command>], _other: &Self) {
+                    self.dispatch(cmd);
+                }
+
+                fn absorb_second(&mut self, cmd: [<$state Command>], _other: &Self) {
+                    self.dispatch(&cmd);
+                }
+
+                fn sync_with(&mut self, first: &Self) {
+                    *self = first.clone();
+                }
+            }
+        }
+    };
 }

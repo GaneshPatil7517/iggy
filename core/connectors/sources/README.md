@@ -4,6 +4,15 @@
 
 Source connectors are responsible for ingesting data from external sources into Apache Iggy. They provide a way to integrate Apache Iggy with various data sources, such as databases, message queues, or file systems.
 
+## Available Sources
+
+| Source | Description |
+| ------ | ----------- |
+| **elasticsearch_source** | Polls documents from Elasticsearch indices with timestamp-based tracking |
+| **influxdb_source** | Polls Flux query results from InfluxDB with cursor-based state tracking |
+| **postgres_source** | Reads rows from PostgreSQL tables with multiple strategies: delete after read, mark as processed, or timestamp tracking |
+| **random_source** | Generates random test messages (useful for testing and development) |
+
 The source is represented by the single `Source` trait, which defines the basic interface for all source connectors. It provides methods for initializing the source, reading data from it, and closing the source.
 
 ```rust
@@ -35,6 +44,7 @@ pub struct SourceConfig {
     pub streams: Vec<StreamProducerConfig>,
     pub plugin_config_format: Option<ConfigFormat>,
     pub plugin_config: Option<serde_json::Value>,
+    pub verbose: bool, // Log message processing at info level instead of debug (default: false)
 }
 ```
 
@@ -46,7 +56,7 @@ config_type = "local"
 config_dir = "path/to/connectors"
 ```
 
-**Source connector config (connectors/random.toml):**
+**Source connector config (connectors/random_source_v0.toml):**
 
 ```toml
 # Type of connector (sink or source)
@@ -59,6 +69,7 @@ version = 0
 name = "Random source" # Name of the source
 path = "libiggy_connector_random_source" # Path to the source connector
 config_format = "toml"
+verbose = false # Log message processing at info level instead of debug
 
 # Collection of the streams to which the produced messages are sent
 [[streams]]

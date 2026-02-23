@@ -17,6 +17,7 @@
  * under the License.
  */
 
+use crate::log::{CallbackLayer, LogCallback};
 use crate::{ConnectorState, Error, Source, get_runtime};
 use serde::de::DeserializeOwned;
 use std::sync::Arc;
@@ -57,6 +58,7 @@ impl<T: Source + std::fmt::Debug + 'static> SourceContainer<T> {
 
     /// # Safety
     /// Do not copy the configuration pointer
+    #[allow(clippy::too_many_arguments)]
     pub unsafe fn open<F, C>(
         &mut self,
         id: u32,
@@ -64,6 +66,7 @@ impl<T: Source + std::fmt::Debug + 'static> SourceContainer<T> {
         config_len: usize,
         state_ptr: *const u8,
         state_len: usize,
+        log_callback: LogCallback,
         factory: F,
     ) -> i32
     where
@@ -72,17 +75,17 @@ impl<T: Source + std::fmt::Debug + 'static> SourceContainer<T> {
     {
         unsafe {
             _ = Registry::default()
-                .with(tracing_subscriber::fmt::layer())
+                .with(CallbackLayer::new(log_callback))
                 .with(EnvFilter::try_from_default_env().unwrap_or(EnvFilter::new("INFO")))
                 .try_init();
             let slice = std::slice::from_raw_parts(config_ptr, config_len);
             let Ok(config_str) = std::str::from_utf8(slice) else {
-                error!("Failed to read configuration for source connector with ID: {id}",);
+                error!("Failed to read configuration for source connector with ID: {id}");
                 return -1;
             };
 
             let Ok(config) = serde_json::from_str(config_str) else {
-                error!("Failed to parse configuration for source connector with ID: {id}",);
+                error!("Failed to parse configuration for source connector with ID: {id}");
                 return -1;
             };
 
@@ -207,6 +210,7 @@ macro_rules! source_connector {
 
         use dashmap::DashMap;
         use once_cell::sync::Lazy;
+        use $crate::LogCallback;
         use $crate::source::SendCallback;
         use $crate::source::SourceContainer;
 
@@ -220,6 +224,7 @@ macro_rules! source_connector {
             config_len: usize,
             state_ptr: *const u8,
             state_len: usize,
+            log_callback: LogCallback,
         ) -> i32 {
             let mut container = SourceContainer::new(id);
             let result = container.open(
@@ -228,6 +233,7 @@ macro_rules! source_connector {
                 config_len,
                 state_ptr,
                 state_len,
+                log_callback,
                 <$type>::new,
             );
             INSTANCES.insert(id, container);
@@ -256,6 +262,13 @@ macro_rules! source_connector {
                 return -1;
             };
             instance.1.close()
+        }
+
+        #[cfg(not(test))]
+        #[unsafe(no_mangle)]
+        extern "C" fn version() -> *const std::ffi::c_char {
+            static VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "\0");
+            VERSION.as_ptr() as *const std::ffi::c_char
         }
     };
 }

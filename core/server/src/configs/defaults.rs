@@ -42,8 +42,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 static_toml::static_toml! {
-    // static_toml crate always starts from CARGO_MANIFEST_DIR (in this case iggy-server root directory)
-    pub static SERVER_CONFIG = include_toml!("../configs/server.toml");
+    // static_toml crate always starts from CARGO_MANIFEST_DIR (core/server)
+    pub static SERVER_CONFIG = include_toml!("config.toml");
 }
 
 impl Default for ServerConfig {
@@ -402,7 +402,14 @@ impl Default for LoggingConfig {
             path: SERVER_CONFIG.system.logging.path.parse().unwrap(),
             level: SERVER_CONFIG.system.logging.level.parse().unwrap(),
             file_enabled: SERVER_CONFIG.system.logging.file_enabled,
-            max_size: SERVER_CONFIG.system.logging.max_size.parse().unwrap(),
+            max_file_size: SERVER_CONFIG.system.logging.max_file_size.parse().unwrap(),
+            max_total_size: SERVER_CONFIG.system.logging.max_total_size.parse().unwrap(),
+            rotation_check_interval: SERVER_CONFIG
+                .system
+                .logging
+                .rotation_check_interval
+                .parse()
+                .unwrap(),
             retention: SERVER_CONFIG.system.logging.retention.parse().unwrap(),
             sysinfo_print_interval: SERVER_CONFIG
                 .system
@@ -436,7 +443,7 @@ impl Default for TopicConfig {
         TopicConfig {
             path: SERVER_CONFIG.system.topic.path.parse().unwrap(),
             max_size: SERVER_CONFIG.system.topic.max_size.parse().unwrap(),
-            delete_oldest_segments: SERVER_CONFIG.system.topic.delete_oldest_segments,
+            message_expiry: SERVER_CONFIG.system.topic.message_expiry.parse().unwrap(),
         }
     }
 }
@@ -464,7 +471,6 @@ impl Default for SegmentConfig {
         SegmentConfig {
             size: SERVER_CONFIG.system.segment.size.parse().unwrap(),
             cache_indexes: SERVER_CONFIG.system.segment.cache_indexes.parse().unwrap(),
-            message_expiry: SERVER_CONFIG.system.segment.message_expiry.parse().unwrap(),
             archive_expired: SERVER_CONFIG.system.segment.archive_expired,
         }
     }

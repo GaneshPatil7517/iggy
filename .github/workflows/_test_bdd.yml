@@ -36,8 +36,6 @@ jobs:
   run:
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    env:
-      IGGY_CI_BUILD: true
     steps:
       - name: Cleanup disk space
         run: |
@@ -57,13 +55,11 @@ jobs:
       - name: Setup Rust with cache for BDD
         if: startsWith(inputs.component, 'bdd-') && startsWith(inputs.task, 'bdd-')
         uses: ./.github/actions/utils/setup-rust-with-cache
-        with:
-          cache-targets: false # Only cache registry and git deps, not target dir (sccache handles that)
 
       - name: Build server for BDD tests
         if: startsWith(inputs.component, 'bdd-') && startsWith(inputs.task, 'bdd-')
         run: |
-          echo "Building server binary and CLI for BDD tests with sccache..."
+          echo "Building server binary and CLI for BDD tests..."
           cargo build --locked --bin iggy-server --bin iggy
 
           echo "Server binary built at: target/debug/iggy-server"

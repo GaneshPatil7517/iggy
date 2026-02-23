@@ -115,7 +115,7 @@ pub async fn start(
     }
 
     // Load or generate TLS certificates
-    let tls_config = &shard.config.tcp.tls;
+    let tls_config = &shard.config.websocket.tls;
     let (certs, key) =
         if tls_config.self_signed && !std::path::Path::new(&tls_config.cert_file).exists() {
             info!("Generating self-signed certificate for WebSocket TLS server");
@@ -209,7 +209,7 @@ async fn accept_loop(
                                             if let Err(error) = handle_connection(&session, &mut sender_kind, &shard_clone, client_stop_receiver).await {
                                                 handle_error(error);
                                             }
-                                            shard_clone.delete_client(session.client_id);
+                                            shard_clone.delete_client(session.client_id).await;
                                             registry_clone.remove_connection(&client_id);
 
                                             match sender_kind.shutdown().await {

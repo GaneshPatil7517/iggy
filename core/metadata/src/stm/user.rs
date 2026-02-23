@@ -15,294 +15,246 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use crate::{
-    permissioner::Permissioner,
-    stm::{ApplyState, StateCommand},
-};
+use crate::permissioner::Permissioner;
+use crate::stm::StateHandler;
+use crate::{collect_handlers, define_state};
 use ahash::AHashMap;
-use bytes::Bytes;
 use iggy_common::change_password::ChangePassword;
+use iggy_common::create_personal_access_token::CreatePersonalAccessToken;
 use iggy_common::create_user::CreateUser;
+use iggy_common::delete_personal_access_token::DeletePersonalAccessToken;
 use iggy_common::delete_user::DeleteUser;
 use iggy_common::update_permissions::UpdatePermissions;
 use iggy_common::update_user::UpdateUser;
-use iggy_common::{
-    BytesSerializable, Identifier, IggyError, IggyTimestamp, Permissions, PersonalAccessToken,
-    UserId, UserStatus,
-    header::{Operation, PrepareHeader},
-    message::Message,
-};
+use iggy_common::{IggyTimestamp, Permissions, PersonalAccessToken, UserId, UserStatus};
 use slab::Slab;
-use std::cell::RefCell;
+use std::sync::Arc;
+
+// ============================================================================
+// User Entity
+// ============================================================================
 
 #[derive(Debug, Clone)]
 pub struct User {
     pub id: UserId,
-    pub username: String,
-    pub password: String,
+    pub username: Arc<str>,
+    pub password_hash: Arc<str>,
     pub status: UserStatus,
     pub created_at: IggyTimestamp,
-    pub permissions: Option<Permissions>,
-    pub personal_access_tokens: AHashMap<String, PersonalAccessToken>,
+    pub permissions: Option<Arc<Permissions>>,
+}
+
+impl Default for User {
+    fn default() -> Self {
+        Self {
+            id: 0,
+            username: Arc::from(""),
+            password_hash: Arc::from(""),
+            status: UserStatus::default(),
+            created_at: IggyTimestamp::default(),
+            permissions: None,
+        }
+    }
 }
 
 impl User {
     pub fn new(
-        username: String,
-        password: String,
+        username: Arc<str>,
+        password_hash: Arc<str>,
         status: UserStatus,
         created_at: IggyTimestamp,
-        permissions: Option<Permissions>,
+        permissions: Option<Arc<Permissions>>,
     ) -> Self {
         Self {
             id: 0,
             username,
-            password,
+            password_hash,
             status,
             created_at,
             permissions,
-            personal_access_tokens: AHashMap::new(),
         }
     }
 }
 
-#[derive(Debug, Clone, Default)]
-pub struct Users {
-    index: RefCell<AHashMap<String, usize>>,
-    items: RefCell<Slab<User>>,
-    permissioner: RefCell<Permissioner>,
+define_state! {
+    Users {
+        index: AHashMap<Arc<str>, UserId>,
+        items: Slab<User>,
+        personal_access_tokens: AHashMap<UserId, AHashMap<Arc<str>, PersonalAccessToken>>,
+        permissioner: Permissioner,
+    }
 }
 
-impl Users {
-    pub fn new() -> Self {
-        Self {
-            index: RefCell::new(AHashMap::with_capacity(1024)),
-            items: RefCell::new(Slab::with_capacity(1024)),
-            permissioner: RefCell::new(Permissioner::new()),
-        }
+collect_handlers! {
+    Users {
+        CreateUser,
+        UpdateUser,
+        DeleteUser,
+        ChangePassword,
+        UpdatePermissions,
+        CreatePersonalAccessToken,
+        DeletePersonalAccessToken,
     }
+}
 
-    /// Insert a user and return the assigned ID
-    pub fn insert(&self, user: User) -> usize {
-        let mut items = self.items.borrow_mut();
-        let mut index = self.index.borrow_mut();
-
-        let username = user.username.clone();
-        let id = items.insert(user);
-        items[id].id = id as u32;
-        index.insert(username, id);
-        id
-    }
-
-    /// Get user by ID
-    pub fn get(&self, id: usize) -> Option<User> {
-        self.items.borrow().get(id).cloned()
-    }
-
-    /// Get user by username or ID (via Identifier enum)
-    pub fn get_by_identifier(&self, identifier: &Identifier) -> Result<Option<User>, IggyError> {
+impl UsersInner {
+    fn resolve_user_id(&self, identifier: &iggy_common::Identifier) -> Option<usize> {
+        use iggy_common::IdKind;
         match identifier.kind {
-            iggy_common::IdKind::Numeric => {
-                let id = identifier.get_u32_value()? as usize;
-                Ok(self.items.borrow().get(id).cloned())
-            }
-            iggy_common::IdKind::String => {
-                let username = identifier.get_string_value()?;
-                let index = self.index.borrow();
-                if let Some(&id) = index.get(&username) {
-                    Ok(self.items.borrow().get(id).cloned())
+            IdKind::Numeric => {
+                let id = identifier.get_u32_value().ok()? as usize;
+                if self.items.contains(id) {
+                    Some(id)
                 } else {
-                    Ok(None)
+                    None
                 }
+            }
+            IdKind::String => {
+                let username = identifier.get_string_value().ok()?;
+                self.index.get(username.as_str()).map(|&id| id as usize)
             }
         }
     }
+}
 
-    /// Remove user by ID
-    pub fn remove(&self, id: usize) -> Option<User> {
-        let mut items = self.items.borrow_mut();
-        let mut index = self.index.borrow_mut();
-
-        if !items.contains(id) {
-            return None;
+impl StateHandler for CreateUser {
+    type State = UsersInner;
+    fn apply(&self, state: &mut UsersInner) {
+        let username_arc: Arc<str> = Arc::from(self.username.as_str());
+        if state.index.contains_key(&username_arc) {
+            return;
         }
 
-        let user = items.remove(id);
-        index.remove(&user.username);
-        Some(user)
-    }
-
-    /// Check if user exists
-    pub fn contains(&self, identifier: &Identifier) -> bool {
-        match identifier.kind {
-            iggy_common::IdKind::Numeric => {
-                if let Ok(id) = identifier.get_u32_value() {
-                    self.items.borrow().contains(id as usize)
-                } else {
-                    false
-                }
-            }
-            iggy_common::IdKind::String => {
-                if let Ok(username) = identifier.get_string_value() {
-                    self.index.borrow().contains_key(&username)
-                } else {
-                    false
-                }
-            }
-        }
-    }
-
-    /// Get all users as a Vec
-    pub fn values(&self) -> Vec<User> {
-        self.items
-            .borrow()
-            .iter()
-            .map(|(_, u): (usize, &User)| u.clone())
-            .collect()
-    }
-
-    /// Get number of users
-    pub fn len(&self) -> usize {
-        self.items.borrow().len()
-    }
-
-    /// Check if empty
-    pub fn is_empty(&self) -> bool {
-        self.items.borrow().is_empty()
-    }
-
-    /// Check if username already exists
-    pub fn username_exists(&self, username: &str) -> bool {
-        self.index.borrow().contains_key(username)
-    }
-
-    /// Get ID by username
-    pub fn get_id_by_username(&self, username: &str) -> Option<usize> {
-        self.index.borrow().get(username).copied()
-    }
-
-    /// Initialize permissions for a user
-    pub fn init_permissions(&self, user_id: UserId, permissions: Option<Permissions>) {
-        self.permissioner
-            .borrow_mut()
-            .init_permissions(user_id, permissions);
-    }
-
-    /// Update permissions for a user
-    pub fn update_permissions(&self, user_id: UserId, permissions: Option<Permissions>) {
-        self.permissioner
-            .borrow_mut()
-            .update_permissions_for_user(user_id, permissions);
-    }
-
-    /// Delete permissions for a user
-    pub fn delete_permissions(&self, user_id: UserId) {
-        self.permissioner.borrow_mut().delete_permissions(user_id);
-    }
-
-    /// Update username
-    pub fn update_username(
-        &self,
-        identifier: &Identifier,
-        new_username: String,
-    ) -> Result<(), IggyError> {
-        let id = match identifier.kind {
-            iggy_common::IdKind::Numeric => identifier.get_u32_value()? as usize,
-            iggy_common::IdKind::String => {
-                let username = identifier.get_string_value()?;
-                let index = self.index.borrow();
-                *index
-                    .get(&username)
-                    .ok_or_else(|| IggyError::ResourceNotFound(username.to_string()))?
-            }
+        let user = User {
+            id: 0,
+            username: username_arc.clone(),
+            password_hash: Arc::from(self.password.as_str()),
+            status: self.status,
+            created_at: iggy_common::IggyTimestamp::now(),
+            permissions: self.permissions.as_ref().map(|p| Arc::new(p.clone())),
         };
 
-        let old_username = {
-            let items = self.items.borrow();
-            let user = items
-                .get(id)
-                .ok_or_else(|| IggyError::ResourceNotFound(identifier.to_string()))?;
-            user.username.clone()
-        };
-
-        if old_username == new_username {
-            return Ok(());
+        let id = state.items.insert(user);
+        if let Some(user) = state.items.get_mut(id) {
+            user.id = id as UserId;
         }
 
-        tracing::trace!(
-            "Updating username: '{}' → '{}' for user ID: {}",
-            old_username,
-            new_username,
-            id
-        );
+        state.index.insert(username_arc, id as UserId);
+        state
+            .personal_access_tokens
+            .insert(id as UserId, AHashMap::default());
+    }
+}
 
+impl StateHandler for UpdateUser {
+    type State = UsersInner;
+    fn apply(&self, state: &mut UsersInner) {
+        let Some(user_id) = state.resolve_user_id(&self.user_id) else {
+            return;
+        };
+
+        let Some(user) = state.items.get_mut(user_id) else {
+            return;
+        };
+
+        if let Some(new_username) = &self.username {
+            let new_username_arc: Arc<str> = Arc::from(new_username.as_str());
+            if let Some(&existing_id) = state.index.get(&new_username_arc)
+                && existing_id != user_id as UserId
+            {
+                return;
+            }
+
+            state.index.remove(&user.username);
+            user.username = new_username_arc.clone();
+            state.index.insert(new_username_arc, user_id as UserId);
+        }
+
+        if let Some(new_status) = self.status {
+            user.status = new_status;
+        }
+    }
+}
+
+impl StateHandler for DeleteUser {
+    type State = UsersInner;
+    fn apply(&self, state: &mut UsersInner) {
+        let Some(user_id) = state.resolve_user_id(&self.user_id) else {
+            return;
+        };
+
+        if let Some(user) = state.items.get(user_id) {
+            let username = user.username.clone();
+            state.items.remove(user_id);
+            state.index.remove(&username);
+            state.personal_access_tokens.remove(&(user_id as UserId));
+        }
+    }
+}
+
+impl StateHandler for ChangePassword {
+    type State = UsersInner;
+    fn apply(&self, state: &mut UsersInner) {
+        let Some(user_id) = state.resolve_user_id(&self.user_id) else {
+            return;
+        };
+
+        if let Some(user) = state.items.get_mut(user_id) {
+            user.password_hash = Arc::from(self.new_password.as_str());
+        }
+    }
+}
+
+impl StateHandler for UpdatePermissions {
+    type State = UsersInner;
+    fn apply(&self, state: &mut UsersInner) {
+        let Some(user_id) = state.resolve_user_id(&self.user_id) else {
+            return;
+        };
+
+        if let Some(user) = state.items.get_mut(user_id) {
+            user.permissions = self.permissions.as_ref().map(|p| Arc::new(p.clone()));
+        }
+    }
+}
+
+impl StateHandler for CreatePersonalAccessToken {
+    type State = UsersInner;
+    fn apply(&self, state: &mut UsersInner) {
+        // TODO: Stub until protocol gets adjusted.
+        let user_id = 0;
+        let user_tokens = state.personal_access_tokens.entry(user_id).or_default();
+        let name_arc: Arc<str> = Arc::from(self.name.as_str());
+        if user_tokens.contains_key(&name_arc) {
+            return;
+        }
+
+        let expiry_at = PersonalAccessToken::calculate_expiry_at(IggyTimestamp::now(), self.expiry);
+        if let Some(expiry_at) = expiry_at
+            && expiry_at.as_micros() <= IggyTimestamp::now().as_micros()
         {
-            let mut items = self.items.borrow_mut();
-            let user = items
-                .get_mut(id)
-                .ok_or_else(|| IggyError::ResourceNotFound(identifier.to_string()))?;
-            user.username = new_username.clone();
+            return;
         }
 
-        let mut index = self.index.borrow_mut();
-        index.remove(&old_username);
-        index.insert(new_username, id);
-
-        Ok(())
+        let (pat, _) = PersonalAccessToken::new(
+            user_id,
+            self.name.as_ref(),
+            IggyTimestamp::now(),
+            self.expiry,
+        );
+        user_tokens.insert(name_arc, pat);
     }
 }
 
-#[derive(Debug)]
-pub enum UsersCommand {
-    Create(CreateUser),
-    Update(UpdateUser),
-    Delete(DeleteUser),
-    ChangePassword(ChangePassword),
-    UpdatePermissions(UpdatePermissions),
-}
+impl StateHandler for DeletePersonalAccessToken {
+    type State = UsersInner;
+    fn apply(&self, state: &mut UsersInner) {
+        // TODO: Stub until protocol gets adjusted.
+        let user_id = 0;
 
-impl StateCommand for Users {
-    type Command = UsersCommand;
-    type Input = Message<PrepareHeader>;
-
-    fn into_command(input: &Self::Input) -> Option<Self::Command> {
-        // TODO: rework this thing, so we don't copy the bytes on each request
-        let body = Bytes::copy_from_slice(input.body());
-        match input.header().operation {
-            Operation::CreateUser => Some(UsersCommand::Create(
-                CreateUser::from_bytes(body.clone()).unwrap(),
-            )),
-            Operation::UpdateUser => Some(UsersCommand::Update(
-                UpdateUser::from_bytes(body.clone()).unwrap(),
-            )),
-            Operation::DeleteUser => Some(UsersCommand::Delete(
-                DeleteUser::from_bytes(body.clone()).unwrap(),
-            )),
-            Operation::ChangePassword => Some(UsersCommand::ChangePassword(
-                ChangePassword::from_bytes(body.clone()).unwrap(),
-            )),
-            Operation::UpdatePermissions => Some(UsersCommand::UpdatePermissions(
-                UpdatePermissions::from_bytes(body.clone()).unwrap(),
-            )),
-            _ => None,
-        }
-    }
-}
-
-impl ApplyState for Users {
-    type Output = ();
-
-    fn do_apply(&self, cmd: Self::Command) -> Self::Output {
-        match cmd {
-            UsersCommand::Create(payload) => todo!("Handle Create user with {:?}", payload),
-            UsersCommand::Update(payload) => todo!("Handle Update user with {:?}", payload),
-            UsersCommand::Delete(payload) => todo!("Handle Delete user with {:?}", payload),
-            UsersCommand::ChangePassword(payload) => {
-                todo!("Handle Change password with {:?}", payload)
-            }
-            UsersCommand::UpdatePermissions(payload) => {
-                todo!("Handle Update permissions with {:?}", payload)
-            }
+        if let Some(user_tokens) = state.personal_access_tokens.get_mut(&user_id) {
+            let name_arc: Arc<str> = Arc::from(self.name.as_str());
+            user_tokens.remove(&name_arc);
         }
     }
 }

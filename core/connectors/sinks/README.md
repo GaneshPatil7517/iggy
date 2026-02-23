@@ -4,6 +4,17 @@
 
 Sink connectors are responsible for writing data from Iggy streams to external systems or destinations. They provide a way to integrate Apache Iggy with various data sources and destinations, enabling seamless data flow and processing.
 
+## Available Sinks
+
+| Sink | Description |
+| ---- | ----------- |
+| **elasticsearch_sink** | Sends messages to Elasticsearch indices for full-text search and analytics |
+| **influxdb_sink** | Writes messages to InfluxDB buckets using line protocol over HTTP API |
+| **iceberg_sink** | Writes data to Apache Iceberg tables via REST catalog with S3/GCS/Azure storage |
+| **postgres_sink** | Stores messages in PostgreSQL database tables with configurable schemas |
+| **quickwit_sink** | Indexes messages in Quickwit search engine for log analytics |
+| **stdout_sink** | Prints messages to standard output (useful for debugging and development) |
+
 The sink is represented by the single `Sink` trait, which defines the basic interface for all sink connectors. It provides methods for initializing the sink, writing data to external destination, and closing the sink.
 
 ```rust
@@ -40,6 +51,7 @@ pub struct SinkConfig {
     pub streams: Vec<StreamConsumerConfig>,
     pub plugin_config_format: Option<ConfigFormat>,
     pub plugin_config: Option<serde_json::Value>,
+    pub verbose: bool, // Log message processing at info level instead of debug (default: false)
 }
 ```
 
@@ -51,7 +63,7 @@ config_type = "local"
 config_dir = "path/to/connectors"
 ```
 
-**Sink connector config (connectors/stdout.toml):**
+**Sink connector config (connectors/stdout_sink.toml):**
 
 ```toml
 # Type of connector (sink or source)
@@ -64,6 +76,7 @@ version = 0
 name = "Stdout sink"
 path = "target/release/libiggy_connector_stdout_sink"
 plugin_config_format = "toml"
+verbose = false # Log message processing at info level instead of debug
 
 # Collection of the streams from which messages are consumed
 [[streams]]

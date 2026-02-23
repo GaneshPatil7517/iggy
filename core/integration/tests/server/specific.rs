@@ -1,4 +1,5 @@
-/* Licensed to the Apache Software Foundation (ASF) under one
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
  * regarding copyright ownership.  The ASF licenses this file
@@ -17,176 +18,79 @@
  */
 
 use crate::server::scenarios::{
-    delete_segments_scenario, message_size_scenario, tcp_tls_scenario, websocket_tls_scenario,
+    delete_segments_scenario, message_size_scenario, segment_rotation_race_scenario,
+    single_message_per_batch_scenario, tcp_tls_scenario, websocket_tls_scenario,
 };
-use iggy::prelude::*;
-use integration::{
-    tcp_client::TcpClientFactory,
-    test_server::{IpAddrKind, TestServer},
-    test_tls_utils::generate_test_certificates,
-};
-use serial_test::parallel;
-use std::collections::HashMap;
+use integration::iggy_harness;
 
-// This test can run on any transport, but it requires both ClientFactory and
-// TestServer parameters, which doesn't fit the unified matrix approach.
-#[tokio::test]
-#[parallel]
-async fn should_delete_segments_and_validate_filesystem() {
-    let mut extra_envs = HashMap::new();
-    extra_envs.insert("IGGY_SYSTEM_SEGMENT_SIZE".to_string(), "1MiB".to_string());
+#[iggy_harness(server(segment.size = "1MiB"))]
+async fn should_delete_segments_and_validate_filesystem(harness: &TestHarness) {
+    let client = harness.tcp_root_client().await.unwrap();
+    let data_path = harness.server().data_path();
 
-    let mut test_server = TestServer::new(Some(extra_envs), true, None, IpAddrKind::V4);
-    test_server.start();
-
-    let server_addr = test_server.get_raw_tcp_addr().unwrap();
-    let client_factory = TcpClientFactory {
-        server_addr,
-        ..Default::default()
-    };
-
-    delete_segments_scenario::run(&client_factory, &test_server).await;
+    delete_segments_scenario::run(&client, &data_path).await;
 }
 
-// TCP TLS scenario is obviously specific to TCP transport, and requires special
-// setup so it's not included in the matrix.
-#[tokio::test]
-#[parallel]
-async fn tcp_tls_scenario_should_be_valid() {
-    let temp_dir = tempfile::TempDir::new().expect("Failed to create temp dir");
-    let cert_dir = temp_dir.path();
-    let cert_dir_str = cert_dir.to_str().unwrap();
-
-    generate_test_certificates(cert_dir_str).expect("Failed to generate test certificates");
-
-    let mut extra_envs = HashMap::new();
-    extra_envs.insert("IGGY_TCP_TLS_ENABLED".to_string(), "true".to_string());
-    extra_envs.insert(
-        "IGGY_TCP_TLS_CERT_FILE".to_string(),
-        cert_dir.join("test_cert.pem").to_str().unwrap().to_string(),
-    );
-    extra_envs.insert(
-        "IGGY_TCP_TLS_KEY_FILE".to_string(),
-        cert_dir.join("test_key.pem").to_str().unwrap().to_string(),
-    );
-
-    let mut test_server = TestServer::new(Some(extra_envs), true, None, IpAddrKind::V4);
-    test_server.start();
-
-    let server_addr = test_server.get_raw_tcp_addr().unwrap();
-    let cert_path = cert_dir.join("test_cert.pem").to_str().unwrap().to_string();
-
-    let client = IggyClientBuilder::new()
-        .with_tcp()
-        .with_server_address(server_addr)
-        .with_tls_enabled(true)
-        .with_tls_domain("localhost".to_string())
-        .with_tls_ca_file(cert_path)
-        .build()
-        .expect("Failed to create TLS client");
-
-    client
-        .connect()
-        .await
-        .expect("Failed to connect TLS client");
-
-    let client = IggyClient::create(ClientWrapper::Iggy(client), None, None);
-
+#[iggy_harness(
+    test_client_transport = TcpTlsGenerated,
+    server(tls = generated)
+)]
+async fn tcp_tls_scenario_should_be_valid(harness: &TestHarness) {
+    let client = harness.root_client().await.unwrap();
     tcp_tls_scenario::run(&client).await;
 }
 
-#[tokio::test]
-#[parallel]
-async fn tcp_tls_self_signed_scenario_should_be_valid() {
-    use iggy::clients::client_builder::IggyClientBuilder;
-
-    let mut extra_envs = HashMap::new();
-    extra_envs.insert("IGGY_TCP_TLS_ENABLED".to_string(), "true".to_string());
-    extra_envs.insert("IGGY_TCP_TLS_SELF_SIGNED".to_string(), "true".to_string());
-
-    let mut test_server = TestServer::new(Some(extra_envs), true, None, IpAddrKind::V4);
-    test_server.start();
-
-    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-
-    let server_addr = test_server.get_raw_tcp_addr().unwrap();
-
-    let client = IggyClientBuilder::new()
-        .with_tcp()
-        .with_server_address(server_addr)
-        .with_tls_enabled(true)
-        .with_tls_domain("localhost".to_string())
-        .with_tls_validate_certificate(false)
-        .build()
-        .expect("Failed to create TLS client");
-
-    client
-        .connect()
-        .await
-        .expect("Failed to connect TLS client with self-signed cert");
-
-    let client = iggy::clients::client::IggyClient::create(ClientWrapper::Iggy(client), None, None);
-
+#[iggy_harness(
+    test_client_transport = TcpTlsSelfSigned,
+    server(tls = self_signed)
+)]
+async fn tcp_tls_self_signed_scenario_should_be_valid(harness: &TestHarness) {
+    let client = harness.root_client().await.unwrap();
     tcp_tls_scenario::run(&client).await;
 }
 
-#[tokio::test]
-#[parallel]
-async fn websocket_tls_scenario_should_be_valid() {
-    let temp_dir = tempfile::TempDir::new().expect("Failed to create temp dir");
-    let cert_dir = temp_dir.path();
-    let cert_dir_str = cert_dir.to_str().unwrap();
-
-    generate_test_certificates(cert_dir_str).expect("Failed to generate test certificates");
-
-    let mut extra_envs = HashMap::new();
-    extra_envs.insert("IGGY_WEBSOCKET_TLS_ENABLED".to_string(), "true".to_string());
-    extra_envs.insert(
-        "IGGY_WEBSOCKET_TLS_CERT_FILE".to_string(),
-        cert_dir.join("test_cert.pem").to_str().unwrap().to_string(),
-    );
-    extra_envs.insert(
-        "IGGY_WEBSOCKET_TLS_KEY_FILE".to_string(),
-        cert_dir.join("test_key.pem").to_str().unwrap().to_string(),
-    );
-
-    let mut test_server = TestServer::new(Some(extra_envs), true, None, IpAddrKind::V4);
-    test_server.start();
-
-    let server_addr = test_server.get_websocket_addr().unwrap();
-    let cert_path = cert_dir.join("test_cert.pem").to_str().unwrap().to_string();
-
-    let client = IggyClientBuilder::new()
-        .with_websocket()
-        .with_server_address(server_addr)
-        .with_tls_enabled(true)
-        .with_tls_domain("localhost".to_string())
-        .with_tls_ca_file(cert_path)
-        .build()
-        .expect("Failed to create WebSocket TLS client");
-
-    client
-        .connect()
-        .await
-        .expect("Failed to connect WebSocket TLS client");
-
-    let client = IggyClient::create(ClientWrapper::Iggy(client), None, None);
-
+#[iggy_harness(
+    test_client_transport = WebSocketTlsGenerated,
+    server(websocket_tls = generated)
+)]
+async fn websocket_tls_scenario_should_be_valid(harness: &TestHarness) {
+    let client = harness.root_client().await.unwrap();
     websocket_tls_scenario::run(&client).await;
 }
 
-// Message size scenario is specific to TCP transport to test the behavior around the maximum message size.
-// When run on other transports, it will fail because both QUIC and HTTP have different message size limits.
-#[tokio::test]
-#[parallel]
-async fn message_size_scenario() {
-    let mut test_server = TestServer::default();
-    test_server.start();
-    let server_addr = test_server.get_raw_tcp_addr().unwrap();
-    let client_factory = TcpClientFactory {
-        server_addr,
-        ..Default::default()
-    };
+#[iggy_harness]
+async fn message_size_scenario(harness: &TestHarness) {
+    message_size_scenario::run(harness).await;
+}
 
-    message_size_scenario::run(&client_factory).await;
+#[iggy_harness(server(partition.messages_required_to_save = "10000"))]
+async fn should_handle_single_message_per_batch_with_delayed_persistence(harness: &TestHarness) {
+    single_message_per_batch_scenario::run(harness, 5).await;
+}
+
+/// This test configures the server to trigger frequent segment rotations and runs
+/// multiple concurrent producers across all protocols (TCP, HTTP, QUIC, WebSocket)
+/// to maximize the chance of hitting the race condition between persist_messages_to_disk
+/// and handle_full_segment.
+///
+/// Server configuration:
+/// - Very small segment size (512B) to trigger frequent rotations
+/// - Short message_saver interval (1s) to add concurrent persist operations
+/// - Small messages_required_to_save (32) to trigger more frequent saves
+/// - cache_indexes = none to trigger clear_active_indexes path
+///
+/// Test configuration:
+/// - 8 producers total (2 per protocol: TCP, HTTP, QUIC, WebSocket)
+/// - All producers write to the same partition for maximum lock contention
+#[iggy_harness(server(
+    segment.size = "512B",
+    message_saver.interval = "1s",
+    partition.messages_required_to_save = "32",
+    segment.cache_indexes = "none",
+    tcp.socket_migration = false,
+    tcp.socket.override_defaults = true,
+    tcp.socket.nodelay = true
+))]
+async fn segment_rotation_scenario(harness: &TestHarness) {
+    segment_rotation_race_scenario::run(harness).await;
 }

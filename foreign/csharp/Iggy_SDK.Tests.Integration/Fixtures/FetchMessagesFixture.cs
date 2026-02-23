@@ -16,12 +16,12 @@
 // // under the License.
 
 using System.Text;
-using Apache.Iggy.Contracts.Http;
 using Apache.Iggy.Enums;
 using Apache.Iggy.Headers;
 using Apache.Iggy.IggyClient;
 using Apache.Iggy.Messages;
 using Apache.Iggy.Tests.Integrations.Helpers;
+using Apache.Iggy.Tests.Integrations.Models;
 using TUnit.Core.Interfaces;
 using Partitioning = Apache.Iggy.Kinds.Partitioning;
 
@@ -31,8 +31,8 @@ public class FetchMessagesFixture : IAsyncInitializer
 {
     internal readonly int MessageCount = 20;
     internal readonly string StreamId = "FetchMessagesStream";
-    internal readonly CreateTopicRequest TopicHeadersRequest = TopicFactory.CreateTopic("HeadersTopic");
-    internal readonly CreateTopicRequest TopicRequest = TopicFactory.CreateTopic("Topic");
+    internal readonly CreateTestTopic TopicHeadersRequest = TopicFactory.CreateTopic("HeadersTopic");
+    internal readonly CreateTestTopic TopicRequest = TopicFactory.CreateTopic("Topic");
 
     [ClassDataSource<IggyServerFixture>(Shared = SharedType.PerAssembly)]
     public required IggyServerFixture IggyServerFixture { get; init; }
@@ -95,8 +95,8 @@ public class FetchMessagesFixture : IAsyncInitializer
             messages.Add(new Message(Guid.NewGuid(), Encoding.UTF8.GetBytes(dummyJson),
                 new Dictionary<HeaderKey, HeaderValue>
                 {
-                    { HeaderKey.New("header1"), HeaderValue.FromString("value1") },
-                    { HeaderKey.New("header2"), HeaderValue.FromInt32(14 + i) }
+                    { HeaderKey.FromString("header1"), HeaderValue.FromString("value1") },
+                    { HeaderKey.FromString("header2"), HeaderValue.FromInt32(14 + i) }
                 }));
         }
 

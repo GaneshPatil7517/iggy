@@ -57,13 +57,10 @@ const EXAMPLES: &str = r#"EXAMPLES:
                                 Mutually exclusive with --message-batches
     --message-size (-m): Message size in bytes [default: 1000]
                         For random sizes, use range format: "100..1000"
-    --start-stream-id (-S): Start stream ID [default: 1]
     --rate-limit (-r): Optional throughput limit per producer (e.g., "50KB", "10MB")
     --warmup-time (-w): Warmup duration [default: 0s]
     --sampling-time (-t): Metrics sampling interval [default: 10ms]
     --moving-average-window (-W): Window size for moving average [default: 20]
-    --cleanup: Remove server data after benchmark
-    --verbose (-v): Show server output (only applicable for local server)
 
     Benchmark-specific options (after the benchmark command):
     --streams (-s): Number of streams
@@ -71,6 +68,7 @@ const EXAMPLES: &str = r#"EXAMPLES:
     --producers (-c): Number of producers
     --consumers (-c): Number of consumers
     --max-topic-size (-T): Max topic size (e.g., "1GiB")
+    --message-expiry (-e): Topic message expiry time (e.g., "1s", "5min", "1h")
 
     Examples with detailed configuration:
 

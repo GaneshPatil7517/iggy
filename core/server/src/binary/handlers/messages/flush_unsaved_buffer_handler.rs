@@ -23,7 +23,6 @@ use crate::binary::handlers::messages::COMPONENT;
 use crate::binary::handlers::utils::receive_and_validate;
 use crate::shard::IggyShard;
 use crate::streaming::session::Session;
-use anyhow::Result;
 use err_trail::ErrContext;
 use iggy_common::{FlushUnsavedBuffer, IggyError, SenderKind};
 use std::rc::Rc;
@@ -43,6 +42,7 @@ impl ServerCommandHandler for FlushUnsavedBuffer {
         shard: &Rc<IggyShard>,
     ) -> Result<HandlerResult, IggyError> {
         debug!("session: {session}, command: {self}");
+        shard.ensure_authenticated(session)?;
 
         let user_id = session.get_user_id();
         let stream_id = self.stream_id.clone();

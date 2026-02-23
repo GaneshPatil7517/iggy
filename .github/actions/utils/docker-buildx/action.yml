@@ -46,6 +46,10 @@ inputs:
     description: "Single platform to build (e.g., linux/amd64). If set, builds only this platform without QEMU. Leave empty for multi-arch build."
     required: false
     default: ""
+  gha-cache:
+    description: "Whether to use GitHub Actions cache for Docker layers (disable to save cache space)"
+    required: false
+    default: "true"
 
 outputs:
   digest:
@@ -271,6 +275,12 @@ runs:
           fi
         fi
 
+        # Filter out GHA cache entries if gha-cache is disabled
+        if [ "${{ inputs.gha-cache }}" = "false" ]; then
+          CACHE_TO=$(echo "$CACHE_TO" | grep -v "type=gha" || true)
+          CACHE_FROM=$(echo "$CACHE_FROM" | grep -v "type=gha" || true)
+        fi
+
         {
           echo 'CACHE_TO<<EOF'
           echo "$CACHE_TO"
@@ -294,8 +304,8 @@ runs:
           echo "RUST_VERSION=$ver" >> "$GITHUB_ENV"
           echo "Using toolchain: $ver"
         else
-          echo "RUST_VERSION=1.92" >> "$GITHUB_ENV"
-          echo "No rust-toolchain.toml found; labeling as 1.92"
+          echo "RUST_VERSION=1.93" >> "$GITHUB_ENV"
+          echo "No rust-toolchain.toml found; labeling as 1.93"
         fi
 
     - name: Compose build args
